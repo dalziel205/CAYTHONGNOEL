@@ -692,12 +692,11 @@
             video = document.getElementById('webcam');
             webcamCanvas = document.getElementById('webcam-preview');
             webcamCtx = webcamCanvas.getContext('2d');
-            // use higher resolution for larger preview (double the logical size for crispness)
-            webcamCanvas.width = 320; webcamCanvas.height = 240;
 
             const vision = await FilesetResolver.forVisionTasks(
                 "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
             );
+            
             handLandmarker = await HandLandmarker.createFromOptions(vision, {
                 baseOptions: {
                     modelAssetPath: `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`,
@@ -706,10 +705,34 @@
                 runningMode: "VIDEO",
                 numHands: 2
             });
-            
+
             if (navigator.mediaDevices?.getUserMedia) {
-                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                // Sử dụng cấu hình linh hoạt thay vì ép cứng 640x480
+                const constraints = {
+                    video: {
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 },
+                        facingMode: "user"
+                    }
+                };
+
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
                 video.srcObject = stream;
+
+                // LẮP THÊM SỰ KIỆN NÀY ĐỂ FIX TỶ LỆ
+                video.addEventListener("loadedmetadata", () => {
+                    // Lấy tỷ lệ thực tế của camera thiết bị
+                    const videoRatio = video.videoWidth / video.videoHeight;
+                    
+                    // Thiết lập kích thước hiển thị cho Canvas khớp với tỷ lệ Camera
+                    // Ví dụ: cố định chiều rộng hiển thị là 320px, chiều cao tự tính theo tỷ lệ
+                    const displayWidth = 320;
+                    webcamCanvas.width = displayWidth;
+                    webcamCanvas.height = displayWidth / videoRatio;
+
+                    console.log(`Camera tỉ lệ: ${video.videoWidth}x${video.videoHeight}`);
+                });
+
                 video.addEventListener("loadeddata", predictWebcam);
             }
         }
@@ -720,9 +743,43 @@
                 lastVideoTime = video.currentTime;
                 // draw webcam preview onto canvas
                 if (webcamCanvas && webcamCtx && video.readyState >= 2) {
-                    try { webcamCtx.drawImage(video, 0, 0, webcamCanvas.width, webcamCanvas.height); } catch(e) {}
-                    const wrapper = document.getElementById('webcam-wrapper');
-                    if (wrapper) wrapper.style.opacity = 1;
+                    try {
+                        // --- BẮT ĐẦU PHẦN SỬA TỶ LỆ ---
+                        const vWidth = video.videoWidth;
+                        const vHeight = video.videoHeight;
+                        const cWidth = webcamCanvas.width;
+                        const cHeight = webcamCanvas.height;
+
+                        // Tính toán tỷ lệ để cắt ảnh (Crop to fill)
+                        const vAspect = vWidth / vHeight;
+                        const cAspect = cWidth / cHeight;
+                        
+                        let sx, sy, sWidth, sHeight;
+
+                        if (vAspect > cAspect) {
+                            // Video rộng hơn canvas (cắt hai bên)
+                            sHeight = vHeight;
+                            sWidth = vHeight * cAspect;
+                            sx = (vWidth - sWidth) / 2;
+                            sy = 0;
+                        } else {
+                            // Video cao hơn canvas (cắt trên dưới)
+                            sWidth = vWidth;
+                            sHeight = vWidth / cAspect;
+                            sx = 0;
+                            sy = (vHeight - sHeight) / 2;
+                        }
+
+                        // Vẽ hình ảnh đã được tính toán tỷ lệ
+                        webcamCtx.clearRect(0, 0, cWidth, cHeight);
+                        webcamCtx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, cWidth, cHeight);
+                        // --- KẾT THÚC PHẦN SỬA TỶ LỆ ---
+
+                        const wrapper = document.getElementById('webcam-wrapper');
+                        if (wrapper) wrapper.style.opacity = 1;
+                    } catch(e) {
+                        console.error("Lỗi vẽ camera:", e);
+                    }
                 }
                 if (handLandmarker) {
                     const result = handLandmarker.detectForVideo(video, performance.now());
